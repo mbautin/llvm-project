@@ -10,6 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <stdio.h>
+
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
 #include "sanitizer_common/sanitizer_stackdepot.h"
@@ -844,16 +846,26 @@ void PrintCurrentStack(ThreadState *thr, uptr pc) {
 // Also see PR27280 comment 2 and 3 for breaking examples and analysis.
 ALWAYS_INLINE USED void PrintCurrentStackSlow(uptr pc) {
 #if !SANITIZER_GO
+  fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
   uptr bp = GET_CURRENT_FRAME();
+  fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
   auto *ptrace = New<BufferedStackTrace>();
+  fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
   ptrace->Unwind(pc, bp, nullptr, false);
+  fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
 
   for (uptr i = 0; i < ptrace->size / 2; i++) {
+    fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d, i=%" PRIu64 "\n", __FILE__, __LINE__, i);
     uptr tmp = ptrace->trace_buffer[i];
+    fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
     ptrace->trace_buffer[i] = ptrace->trace_buffer[ptrace->size - i - 1];
+    fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
     ptrace->trace_buffer[ptrace->size - i - 1] = tmp;
   }
-  PrintStack(SymbolizeStack(*ptrace));
+  fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
+  auto symbolized_stack = SymbolizeStack(*ptrace);
+  PrintStack(symbolized_stack);
+  fprintf(stderr, "DEBUG mbautin:  file=%s, line=%d\n", __FILE__, __LINE__);
 #endif
 }
 
