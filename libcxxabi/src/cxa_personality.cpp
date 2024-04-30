@@ -45,6 +45,11 @@ extern "C" EXCEPTION_DISPOSITION _GCC_specific_handler(PEXCEPTION_RECORD,
                                                        _Unwind_Personality_Fn);
 #endif
 
+#define DEBUG_LOG(format, ...) \
+    fprintf(stdout, \
+            "DEBUG mbautin [ %s:%d %s ] " format "\n", \
+            __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+
 /*
     Exception Header Layout:
 
@@ -589,10 +594,29 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                         bool native_exception,
                         _Unwind_Exception *unwind_exception,
                         _Unwind_Context *context) {
-    fprintf(
-        stderr,
-        "DEBUG mbautin: scan_eh_tab called: actions=%d, native_exception=%d\n",
+
+// typedef enum {
+//   _UA_SEARCH_PHASE = 1,
+//   _UA_CLEANUP_PHASE = 2,
+//   _UA_HANDLER_FRAME = 4,
+//   _UA_FORCE_UNWIND = 8,
+//   _UA_END_OF_STACK = 16 // gcc extension to C++ ABI
+// } _Unwind_Action;
+
+    DEBUG_LOG(
+        "scan_eh_tab called: actions=%d ("
+        "SEARCH_PHASE=%d, "
+        "CLEANUP_PHASE=%d, "
+        "HANDLER_FRAME=%d, "
+        "FORCE_UNWIND=%d, "
+        "END_OF_STACK=%d"
+        "), native_exception=%d\n",
         actions,
+        (actions & _UA_SEARCH_PHASE) != 0,
+        (actions & _UA_CLEANUP_PHASE) != 0,
+        (actions & _UA_HANDLER_FRAME) != 0,
+        (actions & _UA_FORCE_UNWIND) != 0,
+        (actions & _UA_END_OF_STACK) != 0,
         native_exception);
     // Initialize results to found nothing but an error
     results.ttypeIndex = 0;
@@ -610,9 +634,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
             // None of these flags should be set during Phase 1
             //   Client error
             results.reason = _URC_FATAL_PHASE1_ERROR;
-            fprintf(stderr,
-                    "DEBUG mbautin: returning from scan_eh_tab, line %d\n",
-                    __LINE__);
+            DEBUG_LOG("returning from scan_eh_tab");
             return;
         }
     }
@@ -624,7 +646,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
             // If _UA_FORCE_UNWIND is set, phase 1 shouldn't have happened.
             //    Client error
             results.reason = _URC_FATAL_PHASE2_ERROR;
-            fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+            DEBUG_LOG("returning from scan_eh_tab");
             return;
         }
     }
@@ -633,7 +655,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
         // One of these should be set.
         //   Client error
         results.reason = _URC_FATAL_PHASE1_ERROR;
-        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+        DEBUG_LOG("returning from scan_eh_tab");
         return;
     }
     // Start scan by getting exception table address.
@@ -642,7 +664,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
     {
         // There is no exception table
         results.reason = _URC_CONTINUE_UNWIND;
-        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+        DEBUG_LOG("returning from scan_eh_tab");
         return;
     }
     results.languageSpecificData = lsda;
@@ -657,15 +679,13 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
     // Get beginning current frame's code (as defined by the
     // emitted dwarf code)
     uintptr_t funcStart = _Unwind_GetRegionStart(context);
-    fprintf(stderr,
-            "DEBUG mbautin: In scan_eh_tab: ip=0x%" PRIx64 ", funcStart=0x%" PRIx64 "\n",
-            ip, funcStart);
+    DEBUG_LOG("ip=0x%" PRIx64 ", funcStart=0x%" PRIx64, ip, funcStart);
 #ifdef __USING_SJLJ_EXCEPTIONS__
     if (ip == uintptr_t(-1))
     {
         // no action
         results.reason = _URC_CONTINUE_UNWIND;
-        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+        DEBUG_LOG("returning from scan_eh_tab");
         return;
     }
     else if (ip == 0)
@@ -706,10 +726,8 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
     int call_site_index = 0;
     while (callSitePtr < callSiteTableEnd)
     {
-        fprintf(
-            stderr,
-            "DEBUG mbautin: scan_eh_tab: scanning call site table entry #%d\n",
-            call_site_index);
+        DEBUG_LOG("DEBUG mbautin: scan_eh_tab: scanning call site table entry #%d",
+                  call_site_index);
         call_site_index++;
 
         // There is one entry per call site.
@@ -720,17 +738,17 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
         uintptr_t length = readEncodedPointer(&callSitePtr, callSiteEncoding);
         uintptr_t landingPad = readEncodedPointer(&callSitePtr, callSiteEncoding);
         uintptr_t actionEntry = readULEB128(&callSitePtr);
-        fprintf(stderr,
-                "start=%" PRIu64 " (0x%" PRIx64 ")"
-                 "; (start + length)=%" PRIu64 " (0x%" PRIx64 ")"
-                 "; ipOffset=%" PRIu64 " (0x%" PRIx64 ")"
-                 "\n",
-                 start,
-                 funcStart + start,
-                 start + length,
-                 funcStart + start + length,
-                 ipOffset,
-                 funcStart + ipOffset);
+        DEBUG_LOG(
+            "start=%" PRIu64 " (0x%" PRIx64 ")"
+            "; (start + length)=%" PRIu64 " (0x%" PRIx64 ")"
+            "; ipOffset=%" PRIu64 " (0x%" PRIx64 ")"
+            "\n",
+            start,
+            funcStart + start,
+            start + length,
+            funcStart + start + length,
+            ipOffset,
+            funcStart + ipOffset);
         if ((start <= ipOffset) && (ipOffset < (start + length)))
 #else  // __USING_SJLJ_EXCEPTIONS__
         // ip is 1-based index into this table
@@ -745,7 +763,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
             {
                 // No handler here
                 results.reason = _URC_CONTINUE_UNWIND;
-                fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+                DEBUG_LOG("returning from scan_eh_tab");
                 return;
             }
             landingPad = (uintptr_t)lpStart + landingPad;
@@ -762,7 +780,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                 results.reason = actions & _UA_SEARCH_PHASE
                                      ? _URC_CONTINUE_UNWIND
                                      : _URC_HANDLER_FOUND;
-                fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+                DEBUG_LOG("returning from scan_eh_tab");
                 return;
             }
             // Convert 1-based byte offset into
@@ -798,7 +816,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                         results.adjustedPtr =
                             get_thrown_object_ptr(unwind_exception);
                         results.reason = _URC_HANDLER_FOUND;
-                        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n",
+                        DEBUG_LOG("returning from scan_eh_tab, line %d\n",
                                 __LINE__);
                         return;
                     }
@@ -825,7 +843,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                             results.actionRecord = actionRecord;
                             results.adjustedPtr = adjustedPtr;
                             results.reason = _URC_HANDLER_FOUND;
-                            fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+                            DEBUG_LOG("returning from scan_eh_tab");
                             return;
                         }
                     }
@@ -859,7 +877,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                             results.actionRecord = actionRecord;
                             results.adjustedPtr = adjustedPtr;
                             results.reason = _URC_HANDLER_FOUND;
-                            fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+                            DEBUG_LOG("returning from scan_eh_tab");
                             return;
                         }
                     } else {
@@ -869,7 +887,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                         results.adjustedPtr =
                             get_thrown_object_ptr(unwind_exception);
                         results.reason = _URC_HANDLER_FOUND;
-                        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+                        DEBUG_LOG("returning from scan_eh_tab");
                         return;
                     }
                     // Scan next action ...
@@ -886,7 +904,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                     results.reason = hasCleanup && actions & _UA_CLEANUP_PHASE
                                          ? _URC_HANDLER_FOUND
                                          : _URC_CONTINUE_UNWIND;
-                    fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+                    DEBUG_LOG("returning from scan_eh_tab");
                     return;
                 }
                 // Go to next action
@@ -910,7 +928,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
       // We need to carefully test exception behavior with LTO.
       // See https://github.com/yugabyte/yugabyte-db/issues/13064 for details.
       results.reason = _URC_CONTINUE_UNWIND;
-      fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
+      DEBUG_LOG("returning from scan_eh_tab");
       return;
     }
 
