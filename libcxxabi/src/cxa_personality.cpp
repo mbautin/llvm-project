@@ -31,9 +31,9 @@
 #   define _LIBUNWIND_VERSION
 #endif
 
-+// Added by mbautin for debugging
-+#include <stdio.h>
-+#include <inttypes.h>
+// Added by mbautin for debugging
+#include <stdio.h>
+#include <inttypes.h>
 
 #if defined(__SEH__) && !defined(__USING_SJLJ_EXCEPTIONS__)
 #include <windows.h>
