@@ -31,6 +31,10 @@
 #   define _LIBUNWIND_VERSION
 #endif
 
++// Added by mbautin for debugging
++#include <stdio.h>
++#include <inttypes.h>
+
 #if defined(__SEH__) && !defined(__USING_SJLJ_EXCEPTIONS__)
 #include <windows.h>
 #include <winnt.h>
@@ -585,6 +589,11 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                         bool native_exception,
                         _Unwind_Exception *unwind_exception,
                         _Unwind_Context *context) {
+    fprintf(
+        stderr,
+        "DEBUG mbautin: scan_eh_tab called: actions=%d, native_exception=%d\n",
+        actions,
+        native_exception);
     // Initialize results to found nothing but an error
     results.ttypeIndex = 0;
     results.actionRecord = 0;
@@ -601,6 +610,9 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
             // None of these flags should be set during Phase 1
             //   Client error
             results.reason = _URC_FATAL_PHASE1_ERROR;
+            fprintf(stderr,
+                    "DEBUG mbautin: returning from scan_eh_tab, line %d\n",
+                    __LINE__);
             return;
         }
     }
@@ -612,6 +624,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
             // If _UA_FORCE_UNWIND is set, phase 1 shouldn't have happened.
             //    Client error
             results.reason = _URC_FATAL_PHASE2_ERROR;
+            fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
             return;
         }
     }
@@ -620,6 +633,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
         // One of these should be set.
         //   Client error
         results.reason = _URC_FATAL_PHASE1_ERROR;
+        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
         return;
     }
     // Start scan by getting exception table address.
@@ -628,6 +642,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
     {
         // There is no exception table
         results.reason = _URC_CONTINUE_UNWIND;
+        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
         return;
     }
     results.languageSpecificData = lsda;
@@ -642,11 +657,15 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
     // Get beginning current frame's code (as defined by the
     // emitted dwarf code)
     uintptr_t funcStart = _Unwind_GetRegionStart(context);
+    fprintf(stderr,
+            "DEBUG mbautin: In scan_eh_tab: ip=0x%" PRIx64 ", funcStart=0x%" PRIx64 "\n",
+            ip, funcStart);
 #ifdef __USING_SJLJ_EXCEPTIONS__
     if (ip == uintptr_t(-1))
     {
         // no action
         results.reason = _URC_CONTINUE_UNWIND;
+        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
         return;
     }
     else if (ip == 0)
@@ -684,8 +703,15 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
     const uint8_t* callSiteTableEnd = callSiteTableStart + callSiteTableLength;
     const uint8_t* actionTableStart = callSiteTableEnd;
     const uint8_t* callSitePtr = callSiteTableStart;
+    int call_site_index = 0;
     while (callSitePtr < callSiteTableEnd)
     {
+        fprintf(
+            stderr,
+            "DEBUG mbautin: scan_eh_tab: scanning call site table entry #%d\n",
+            call_site_index);
+        call_site_index++;
+
         // There is one entry per call site.
 #ifndef __USING_SJLJ_EXCEPTIONS__
         // The call sites are non-overlapping in [start, start+length)
@@ -694,6 +720,17 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
         uintptr_t length = readEncodedPointer(&callSitePtr, callSiteEncoding);
         uintptr_t landingPad = readEncodedPointer(&callSitePtr, callSiteEncoding);
         uintptr_t actionEntry = readULEB128(&callSitePtr);
+        fprintf(stderr,
+                "start=%" PRIu64 " (0x%" PRIx64 ")"
+                 "; (start + length)=%" PRIu64 " (0x%" PRIx64 ")"
+                 "; ipOffset=%" PRIu64 " (0x%" PRIx64 ")"
+                 "\n",
+                 start,
+                 funcStart + start,
+                 start + length,
+                 funcStart + start + length,
+                 ipOffset,
+                 funcStart + ipOffset);
         if ((start <= ipOffset) && (ipOffset < (start + length)))
 #else  // __USING_SJLJ_EXCEPTIONS__
         // ip is 1-based index into this table
@@ -708,9 +745,13 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
             {
                 // No handler here
                 results.reason = _URC_CONTINUE_UNWIND;
+                fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
                 return;
             }
             landingPad = (uintptr_t)lpStart + landingPad;
+            fprintf(
+                stderr,
+                "DEBUG mbautin: scan_eh_tab found landing pad: 0x%" PRIx64 "\n", landingPad);
 #else  // __USING_SJLJ_EXCEPTIONS__
             ++landingPad;
 #endif // __USING_SJLJ_EXCEPTIONS__
@@ -721,6 +762,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                 results.reason = actions & _UA_SEARCH_PHASE
                                      ? _URC_CONTINUE_UNWIND
                                      : _URC_HANDLER_FOUND;
+                fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
                 return;
             }
             // Convert 1-based byte offset into
@@ -733,6 +775,10 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                 int64_t ttypeIndex = readSLEB128(&action);
                 if (ttypeIndex > 0)
                 {
+                    fprintf(stderr,
+                            "DEBUG mbautin: ttypeindex=0x%" PRId64 ", found a catch\n",
+                            ttypeIndex);
+
                     // Found a catch, does it actually catch?
                     // First check for catch (...)
                     const __shim_type_info* catchType =
@@ -752,6 +798,8 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                         results.adjustedPtr =
                             get_thrown_object_ptr(unwind_exception);
                         results.reason = _URC_HANDLER_FOUND;
+                        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n",
+                                __LINE__);
                         return;
                     }
                     // Else this is a catch (T) clause and will never
@@ -777,6 +825,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                             results.actionRecord = actionRecord;
                             results.adjustedPtr = adjustedPtr;
                             results.reason = _URC_HANDLER_FOUND;
+                            fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
                             return;
                         }
                     }
@@ -810,6 +859,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                             results.actionRecord = actionRecord;
                             results.adjustedPtr = adjustedPtr;
                             results.reason = _URC_HANDLER_FOUND;
+                            fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
                             return;
                         }
                     } else {
@@ -819,6 +869,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                         results.adjustedPtr =
                             get_thrown_object_ptr(unwind_exception);
                         results.reason = _URC_HANDLER_FOUND;
+                        fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
                         return;
                     }
                     // Scan next action ...
@@ -835,6 +886,7 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
                     results.reason = hasCleanup && actions & _UA_CLEANUP_PHASE
                                          ? _URC_HANDLER_FOUND
                                          : _URC_CONTINUE_UNWIND;
+                    fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
                     return;
                 }
                 // Go to next action
@@ -858,11 +910,16 @@ static void scan_eh_tab(scan_results &results, _Unwind_Action actions,
       // We need to carefully test exception behavior with LTO.
       // See https://github.com/yugabyte/yugabyte-db/issues/13064 for details.
       results.reason = _URC_CONTINUE_UNWIND;
+      fprintf(stderr, "DEBUG mbautin: returning from scan_eh_tab, line %d\n", __LINE__);
       return;
     }
 
     // It is possible that no eh table entry specify how to handle
     // this exception. By spec, terminate it immediately.
+
+    fprintf(stderr,
+            "DEBUG mbautin: Calling terminate on line %d, scanned %d call sites\n",
+            __LINE__, call_site_index);
     call_terminate(native_exception, unwind_exception);
 }
 
@@ -947,6 +1004,10 @@ __gxx_personality_v0
         results.languageSpecificData = exception_header->languageSpecificData;
         results.landingPad =
             reinterpret_cast<uintptr_t>(exception_header->catchTemp);
+        fprintf(
+            stderr,
+            "DEBUG mbautin: Reloaded results from the phase 1 cache: landingPad=0x%" PRIxPTR "\n",
+            results.landingPad);
         results.adjustedPtr = exception_header->adjustedPtr;
 
         // Jump to the handler.
