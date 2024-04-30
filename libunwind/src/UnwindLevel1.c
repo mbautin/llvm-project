@@ -88,6 +88,8 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
 
     // If there is a personality routine, ask it if it will want to stop at
     // this frame.
+    __unw_get_reg(cursor, UNW_REG_SP, &sp);
+    fprintf(stderr, "In phase 1: sp=0x%"  PRIx64 "\n", sp);
     if (frameInfo.handler != 0) {
       _Unwind_Personality_Fn p =
           (_Unwind_Personality_Fn)(uintptr_t)(frameInfo.handler);
@@ -103,6 +105,7 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
         // stop search and remember stack pointer at the frame
         __unw_get_reg(cursor, UNW_REG_SP, &sp);
         exception_object->private_2 = (uintptr_t)sp;
+        fprintf(stderr, "Setting private_2 to 0x%" PRIxPTR "\n", sp);
         _LIBUNWIND_TRACE_UNWINDING(
             "unwind_phase1(ex_ojb=%p): _URC_HANDLER_FOUND",
             (void *)exception_object);
@@ -130,13 +133,22 @@ unwind_phase1(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
 
 static _Unwind_Reason_Code
 unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *exception_object) {
+  for (int i = 0; i < 80; ++i) {
+    fprintf(stderr, "=");
+  }
+  fprintf(stderr, "\n");
+  fprintf(stderr, "\n\nDEBUG mbautin: starting new unwind_phase2: uc=%p, cursor=%p, exception_object=%p\n\n",
+      uc, cursor, exception_object);
   __unw_init_local(cursor, uc);
 
   _LIBUNWIND_TRACE_UNWINDING("unwind_phase2(ex_ojb=%p)",
                              (void *)exception_object);
 
   // Walk each frame until we reach where search phase said to stop.
+  int step_index= 0;
   while (true) {
+    fprintf(stderr, "\n-------- libunwind phase 2 step index %d\n\n", step_index);
+    step_index++;
 
     // Ask libunwind to get next frame (skip over first which is
     // _Unwind_RaiseException).
@@ -158,7 +170,19 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
     // Get info about this frame.
     unw_word_t sp;
     unw_proc_info_t frameInfo;
-    __unw_get_reg(cursor, UNW_REG_SP, &sp);
+    int get_reg_result = __unw_get_reg(cursor, UNW_REG_SP, &sp);
+    fprintf(stderr, "phase 2: read sp=0x%" PRIx64 ", get_reg_result=%d\n", sp, get_reg_result);
+    if (get_reg_result != 0) {
+      fprintf(stderr, "\nphase 2: __unw_get_reg FAILED!\n\n");
+    }
+
+    unw_word_t pc_unused;
+    get_reg_result = __unw_get_reg(cursor, UNW_REG_IP, &pc_unused);
+    fprintf(stderr, "phase 2: read ip=0x%" PRIx64 ", get_reg_result=%d\n", pc_unused, get_reg_result);
+    if (get_reg_result != 0) {
+      fprintf(stderr, "\nphase 2: __unw_get_reg FAILED!\n\n");
+    }
+
     if (__unw_get_proc_info(cursor, &frameInfo) != UNW_ESUCCESS) {
       _LIBUNWIND_TRACE_UNWINDING(
           "unwind_phase2(ex_ojb=%p): __unw_get_proc_info "
@@ -168,7 +192,7 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
     }
 
     // When tracing, print state information.
-    if (_LIBUNWIND_TRACING_UNWINDING) {
+    if (_LIBUNWIND_TRACING_UNWINDING || 1) {
       char functionBuf[512];
       const char *functionName = functionBuf;
       unw_word_t offset;
@@ -176,9 +200,9 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
                                &offset) != UNW_ESUCCESS) ||
           (frameInfo.start_ip + offset > frameInfo.end_ip))
         functionName = ".anonymous.";
-      _LIBUNWIND_TRACE_UNWINDING("unwind_phase2(ex_ojb=%p): start_ip=0x%" PRIxPTR
+      fprintf(stderr, "unwind_phase2(ex_ojb=%p): start_ip=0x%" PRIxPTR
                                  ", func=%s, sp=0x%" PRIxPTR ", lsda=0x%" PRIxPTR
-                                 ", personality=0x%" PRIxPTR,
+                                 ", personality=0x%" PRIxPTR "\n",
                                  (void *)exception_object, frameInfo.start_ip,
                                  functionName, sp, frameInfo.lsda,
                                  frameInfo.handler);
@@ -189,9 +213,12 @@ unwind_phase2(unw_context_t *uc, unw_cursor_t *cursor, _Unwind_Exception *except
       _Unwind_Personality_Fn p =
           (_Unwind_Personality_Fn)(uintptr_t)(frameInfo.handler);
       _Unwind_Action action = _UA_CLEANUP_PHASE;
+      fprintf(stderr, "sp=0x%" PRIxPTR ", exception_object->private_2=0x%" PRIxPTR "\n",
+              sp, exception_object->private_2);
       if (sp == exception_object->private_2) {
         // Tell personality this was the frame it marked in phase 1.
         action = (_Unwind_Action)(_UA_CLEANUP_PHASE | _UA_HANDLER_FRAME);
+        fprintf(stderr, "Setting action to %d\n", action);
       }
        _Unwind_Reason_Code personalityResult =
           (*p)(1, action, exception_object->exception_class, exception_object,
@@ -248,7 +275,6 @@ unwind_phase2_forced(unw_context_t *uc, unw_cursor_t *cursor,
 
   // Walk each frame until we reach where search phase said to stop
   while (__unw_step(cursor) > 0) {
-
     // Update info about this frame.
     unw_proc_info_t frameInfo;
     if (__unw_get_proc_info(cursor, &frameInfo) != UNW_ESUCCESS) {
